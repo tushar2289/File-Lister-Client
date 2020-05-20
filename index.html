@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>File lister</title>
+    <script src="https://unpkg.com/vue"></script>
+    <link rel="stylesheet" type="text/css" href="index.css" />
+    <style>
+      [v-cloak] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="todoapp">
+      <header class="header">
+        <h1>File lister</h1>
+      </header>
+      <div class="upload_container" :class="{signed_in: isUserSignedIn}">
+        <form
+          enctype="multipart/form-data"
+          novalidate
+          v-if="isInitial || isSaving"
+        >
+          <div class="dropbox">
+            <input
+              type="file"
+              multiple
+              :name="uploadFieldName"
+              :disabled="isSaving"
+              @change="filesChange($event.target.name, $event.target.files);"
+              accept="image/*"
+              class="input-file"
+            />
+            <p v-if="isInitial">
+              Drag your file(s) here to begin<br />
+              or click to browse
+            </p>
+            <p v-if="isSaving">
+              Uploading {{ fileCount }} files...
+            </p>
+          </div>
+        </form>
+        <section class="main" v-show="files.length" v-cloak>
+          <ul class="todo-list">
+            <li v-for="file in files" class="todo" :key="file.id">
+              <div class="view">
+                <label>{{ file.name }}</label>
+                <span>{{ getFileSize(file.size) }}</span>
+                <span class="time"
+                  >{{ "Created " + timeSince(file.createdon) + " ago" }}</span
+                >
+                <button class="destroy" @click="deleteFile(file)"></button>
+              </div>
+            </li>
+          </ul>
+        </section>
+        <footer class="footer" v-show="files.length" v-cloak>
+          <span class="todo-count">
+            <strong>{{ files.length }}</strong> file(s) available
+          </span>
+        </footer>
+      </div>
+
+      <div class="sign_in_container" :class="{signed_in: !isUserSignedIn}">
+        <input placeholder="Username" type="text" v-model="username"></input>
+        <input placeholder="password" type="password" v-model="password"></input>
+        <div class="error">{{errorMessage}}</div>
+        <button v-on:click="signin">Sign in</button>
+      </div>
+    </section>
+    <footer class="info">
+      <p>
+        Written by
+        <a href="https://www.linkedin.com/in/tushar2289/"
+          >Tushar Ranjan Sahoo</a
+        >
+      </p>
+    </footer>
+
+    <script>
+      //Backend server link
+      var BACKEND_SERVER = "http://localhost:8080";
+
+      const STATUS_INITIAL = 0,
+        STATUS_SAVING = 1,
+        STATUS_SUCCESS = 2,
+        STATUS_FAILED = 3;
+
+      var aDay = 24 * 60 * 60 * 1000;
+
+      // app Vue instance
+      var app = new Vue({
+        // app initial state
+        data() {
+          return {
+            files: [],
+            currentStatus: 0,
+            uploadFieldName: "upload",
+            isUserSignedIn: localStorage.getItem("TOKEN") ? true: false,
+            username: 'user1',
+            password: 'password1',
+            token: localStorage.getItem("TOKEN") || '',
+            errorMessage: ''
+          };
+        },
+
+        computed: {
+          isInitial() {
+            return this.currentStatus === STATUS_INITIAL;
+          },
+          isSaving() {
+            return this.currentStatus === STATUS_SAVING;
+          },
+          isSuccess() {
+            return this.currentStatus === STATUS_SUCCESS;
+          },
+          isFailed() {
+            return this.currentStatus === STATUS_FAILED;
+          },
+        },
+
+        created() {
+          if(this.isUserSignedIn)
+            this.fetchFiles();
+        },
+
+        // methods that implement data logic.
+        // note there's no DOM manipulation here at all.
+        methods: {
+          async signin() {
+            this.errorMessage = '';
+            const response = await postData(`${BACKEND_SERVER}/signin`, { username: this.username, password: this.password })
+            if(response.errorMessage){
+              this.errorMessage = response.errorMessage;
+            }else{ 
+              this.token = response.token;
+              this.isUserSignedIn = true;
+              localStorage.setItem("TOKEN", this.token)
+              this.fetchFiles();
+            }
+          },
+          fetchFiles: function () {
+            var files = [];
+            fetch(`${BACKEND_SERVER}?token=${this.token}`)
+            .then((response) => {
+              if(response.status !== 200){
+                this.isUserSignedIn = false;
+                this.token = '';
+                return;
+              }
+              return response.json()
+            })
+            .then(({ data }) => {
+              data.forEach(function (file, index) {
+                files.push({
+                  ...file,
+                  id: index,
+                });
+              });
+              this.files = files;
+            });
+          },
+
+          deleteFile: function (file) {
+            fetch(`${BACKEND_SERVER}?path=${file.path}&token=${this.token}`, {
+              method: "DELETE",
+            })
+              .then((res) => {
+                if(res.status !== 200){
+                  this.isUserSignedIn = false;
+                  this.token = '';
+                  return;
+                }
+                return res.json()
+              })
+              .then((res) => {
+                const index = this.files.indexOf(file);
+                if (index > -1) {
+                  this.files.splice(index, 1);
+                }
+              });
+          },
+
+          save(formData) {
+            // upload data to the server
+            fetch(`${BACKEND_SERVER}/uploadProfilePicture?token=${this.token}`, {
+              method: "POST",
+              body: formData,
+            })
+              .then((response) => {
+                if(response.status !== 200){
+                  this.isUserSignedIn = false;
+                  this.token = '';
+                  return;
+                }
+                return response.json()
+              })
+              .then((result) => {
+                this.fetchFiles();
+              })
+              .catch((error) => {
+                console.error("Error:", error);
+              });
+          },
+
+          filesChange(fieldName, fileList) {
+            // handle file changes
+            const formData = new FormData();
+
+            if (!fileList.length) return;
+
+            // append the files to FormData
+            Array.from(Array(fileList.length).keys()).map((x) => {
+              formData.append(fieldName, fileList[x], fileList[x].name);
+            });
+
+            // save it
+            this.save(formData);
+          },
+
+          getFileSize(bytes, si = false, dp = 1) {
+            const thresh = si ? 1000 : 1024;
+
+            if (Math.abs(bytes) < thresh) {
+              return bytes + " B";
+            }
+
+            const units = si
+              ? ["kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
+              : ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
+            let u = -1;
+            const r = 10 ** dp;
+
+            do {
+              bytes /= thresh;
+              ++u;
+            } while (
+              Math.round(Math.abs(bytes) * r) / r >= thresh &&
+              u < units.length - 1
+            );
+
+            return bytes.toFixed(dp) + " " + units[u];
+          },
+
+          timeSince(date) {
+            var seconds = Math.floor((new Date() - new Date(date)) / 1000);
+
+            var interval = Math.floor(seconds / 31536000);
+
+            if (interval > 1) {
+              return interval + " years";
+            }
+            interval = Math.floor(seconds / 2592000);
+            if (interval > 1) {
+              return interval + " months";
+            }
+            interval = Math.floor(seconds / 86400);
+            if (interval > 1) {
+              return interval + " days";
+            }
+            interval = Math.floor(seconds / 3600);
+            if (interval > 1) {
+              return interval + " hours";
+            }
+            interval = Math.floor(seconds / 60);
+            if (interval > 1) {
+              return interval + " minutes";
+            }
+            return Math.floor(seconds) + " seconds";
+          },
+        },
+      });
+
+      async function postData(url = '', data = {}) {
+        // Default options are marked with *
+        return fetch(url, {
+          method: 'POST', 
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          redirect: 'follow', // manual, *follow, error
+          body: JSON.stringify(data) // body data type must match 
+        })
+        .then((res) => {
+          if(res.status !== 200){
+            return {
+              errorMessage: "Invalid username or password"
+            }
+          }
+          
+          return res.json()
+        })
+      }
+
+      // mount
+      app.$mount(".todoapp");
+    </script>
+  </body>
+</html>
